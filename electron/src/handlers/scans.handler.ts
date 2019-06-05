@@ -1,18 +1,18 @@
 import { clipboard, dialog, shell } from 'electron';
 import * as fs from 'fs';
+import * as http from 'http';
 import * as robotjs from 'robotjs';
 import { isNumeric } from 'rxjs/util/isNumeric';
 import * as WebSocket from 'ws';
-
 import { requestModel, requestModelHelo, requestModelPutScanSessions } from '../../../ionic/src/models/request.model';
 import { responseModelPutScanAck } from '../../../ionic/src/models/response.model';
 import { Handler } from '../models/handler.model';
 import { SettingsHandler } from './settings.handler';
 import { UiHandler } from './ui.handler';
+import { ScanModel } from '../../../ionic/src/models/scan.model';
+
 
 export class ScansHandler implements Handler {
-    private deviceName = "unknown";
-
     private static instance: ScansHandler;
     private constructor(
         private settingsHandler: SettingsHandler,
@@ -28,8 +28,8 @@ export class ScansHandler implements Handler {
         return ScansHandler.instance;
     }
 
-    onWsMessage(ws: WebSocket, message: any) {
-        console.log('message', message)
+    onWsMessage(ws: WebSocket, message: any, req: http.IncomingMessage) {
+        // console.log('message', message)
         switch (message.action) {
             case requestModel.ACTION_PUT_SCAN_SESSIONS: {
                 let request: requestModelPutScanSessions = message;
@@ -40,107 +40,38 @@ export class ScansHandler implements Handler {
                     return;
                 }
 
+                // At the moment the server supports only one scanSession and one scan per request
                 let scanSession = request.scanSessions[0];
                 let scan = scanSession.scannings[0];
-                let barcode = scan.text;
 
                 (async () => {
-                    let csvOut = '';
-                    for (let stringComponent of this.settingsHandler.typedString) {
-                        let outputString;
-
-                        switch (stringComponent.type) {
-                            case 'barcode': {
-                                outputString = barcode;
-                                break;
-                            }
-                            case 'text': {
-                                outputString = stringComponent.value;
-                                break;
-                            }
-                            case 'key': {
-                                if (this.settingsHandler.enableRealtimeStrokes) {
-                                    robotjs.keyTap(stringComponent.value);
-                                }
-
-                                if (stringComponent.value == 'tab') {
-                                    csvOut += '\t';
-                                }
-                                break;
-                            }
-                            case 'variable': {
-                                switch (stringComponent.value) {
-                                    case 'deviceName': {
-                                        outputString = this.deviceName;
-                                        break;
-                                    }
-
-                                    case 'timestamp': {
-                                        outputString = (scan.date * 1000) + ' ';
-                                        break;
-                                    }
-
-                                    case 'date': {
-                                        outputString = new Date(scan.date).toLocaleDateString();
-                                        break;
-                                    }
-
-                                    case 'time': {
-                                        outputString = new Date(scan.date).toLocaleTimeString();
-                                        break;
-                                    }
-
-                                    case 'date_time': {
-                                        outputString = new Date(scan.date).toLocaleTimeString() + ' ' + new Date(scan.date).toLocaleDateString();
-                                        break;
-                                    }
-
-                                    case 'quantity': {
-                                        if (scan.quantity) {
-                                            outputString = scan.quantity + '';
-                                        } else {
-                                            // electron popup: invalid quantity, please enable quantity in the app and insert a numeric value.
-                                            dialog.showMessageBox(this.uiHandler.mainWindow, {
-                                                type: 'error',
-                                                title: 'Invalid quantity',
-                                                message: 'Please make you sure to enter a quantity in the app',
-                                            });
-                                        }
-                                        break;
-                                    }
-                                }
-                                break;
-                            }
-                            case 'function': {
-                                let functionCode = stringComponent.value.replace('barcode', '"' + barcode + '"');
-                                outputString = eval(functionCode);
-                                break;
-                            }
-
+                    for (let outputBlock of scan.outputBlocks) {
+                        switch (outputBlock.type) {
+                            case 'key': this.keyTap(outputBlock.value); break;
+                            case 'text': this.typeString(outputBlock.value); break;
+                            case 'variable': this.typeString(outputBlock.value); break;
+                            case 'function': this.typeString(outputBlock.value); break;
+                            case 'barcode': this.typeString(outputBlock.value); break;
                             case 'delay': {
-                                if (isNumeric(stringComponent.value)) {
-                                    await new Promise((resolve) => {
-                                        setTimeout(resolve, parseInt(stringComponent.value))
-                                    })
+                                if (isNumeric(outputBlock.value)) {
+                                    await new Promise(resolve => setTimeout(resolve, parseInt(outputBlock.value)))
                                 }
                                 break;
                             }
-                        }
-                        if (outputString) {
-                            csvOut += outputString;
-                        }
-                        if (this.settingsHandler.enableRealtimeStrokes) {
-                            this.typeString(outputString);
-                        }
+                        } // end switch
                     } // end for
-                    if (this.settingsHandler.appendCSVEnabled) {
-                        let newLineCharacter = this.settingsHandler.newLineCharacter.replace('CR', '\r').replace('LF', '\n');
-                        this.appendToCSVFile(csvOut + newLineCharacter);
-                    }
                 })();
 
+                if (this.settingsHandler.appendCSVEnabled) {
+                    let newLineCharacter = this.settingsHandler.newLineCharacter.replace('CR', '\r').replace('LF', '\n');
+                    if (this.settingsHandler.appendCSVEnabled && this.settingsHandler.csvPath) {
+                        let text = ScanModel.ToString(scan) + newLineCharacter;
+                        fs.appendFileSync(this.settingsHandler.csvPath, text);
+                    }
+                }
+
                 if (this.settingsHandler.enableOpenInBrowser) {
-                    shell.openExternal(barcode);
+                    shell.openExternal(ScanModel.ToString(scan));
                 }
 
                 // ACK
@@ -156,16 +87,20 @@ export class ScansHandler implements Handler {
 
             case requestModel.ACTION_HELO: {
                 let request: requestModelHelo = message;
-                if (request && request.deviceName) {
-                    this.deviceName = request.deviceName;
-                }
                 break;
             }
         }
     }
 
+    keyTap(key) {
+        if (!this.settingsHandler.enableRealtimeStrokes || !key) {
+            return;
+        }
+        robotjs.keyTap(key);
+    }
+
     typeString(string) {
-        if (!string) {
+        if (!this.settingsHandler.enableRealtimeStrokes || !string) {
             return;
         }
 
@@ -175,12 +110,6 @@ export class ScansHandler implements Handler {
             var ctrlKey = process.platform === "darwin" ? "command" : "control";
             clipboard.writeText(string);
             robotjs.keyTap("v", ctrlKey);
-        }
-    }
-
-    appendToCSVFile(text: string) {
-        if (this.settingsHandler.appendCSVEnabled && this.settingsHandler.csvPath) {
-            fs.appendFileSync(this.settingsHandler.csvPath, text);
         }
     }
 

@@ -2,13 +2,14 @@ import { Component, HostListener, NgZone, ViewChild } from '@angular/core';
 import { Title } from '@angular/platform-browser';
 import ElectronStore from 'electron-store';
 import { saveAs } from 'file-saver';
-import { Content, Events, ModalController, NavController, NavParams, Popover, PopoverController, Searchbar, ViewController } from 'ionic-angular';
+import { Alert, AlertController, AlertOptions, Content, Events, ModalController, NavController, NavParams, Popover, PopoverController, Searchbar, ViewController } from 'ionic-angular';
 import * as Papa from 'papaparse';
 import { Config } from '../../../../electron/src/config';
 import { DeviceModel } from '../../models/device.model';
 import { requestModel, requestModelClearScanSessions, requestModelDeleteScan, requestModelDeleteScanSessions, requestModelHelo, requestModelPutScanSessions, requestModelUpdateScanSession } from '../../models/request.model';
 import { ScanSessionModel } from '../../models/scan-session.model';
 import { ScanModel } from '../../models/scan.model';
+import { SettingsModel } from '../../models/settings.model';
 import { DevicesProvider } from '../../providers/devices/devices';
 import { ElectronProvider } from '../../providers/electron/electron';
 import { LastToastProvider } from '../../providers/last-toast/last-toast';
@@ -17,7 +18,7 @@ import { UtilsProvider } from '../../providers/utils/utils';
 import { ActivatePage } from '../activate/activate';
 import { InfoPage } from '../info/info';
 import { SettingsPage } from '../settings/settings';
-import { SettingsModel } from '../../models/settings.model';
+import { gt, SemVer, lt } from 'semver';
 
 /**
  * Generated class for the HomePage page.
@@ -60,6 +61,7 @@ export class HomePage {
     public events: Events,
     public title: Title,
     public devicesProvider: DevicesProvider,
+    private alertCtrl: AlertController,
     public licenseProvider: LicenseProvider,
   ) {
     // debug
@@ -83,15 +85,6 @@ export class HomePage {
         this.connectedClientPopover.dismiss();
       }
       // console.log('@@@', this.connectedDevices)
-    });
-
-    this.electronProvider.ipcRenderer.on('find', (e, data: {}) => {
-      this.ngZone.run(() => {
-        this.hideSearchBar = false;
-        setTimeout(() => {
-          this.searchbar.setFocus();
-        }, 250)
-      })
     });
   }
 
@@ -128,126 +121,179 @@ export class HomePage {
 
   ionViewDidLoad() {
     this.title.setTitle(Config.APP_NAME);
+    this.scanSessions = this.store.get(Config.STORAGE_SCAN_SESSIONS, []);
 
-    if (this.electronProvider.isElectron()) {
+    // If the app isn't package inside electron it will never
+    // receive these events, so i won't subscribe to them
+    if (!this.electronProvider.isElectron()) {
+      return;
+    }
 
-      this.electronProvider.ipcRenderer.on(requestModel.ACTION_HELO, (e, request: requestModelHelo) => {
-        this.ngZone.run(() => {
+    this.checkAccessibilityPermission();
 
-        });
-        this.lastToast.present('A connection was successfully established with ' + request.deviceName)
-      });
+    // Those events are inside ionViewDidLoad because they need to be listening
+    // as long as the Home page is alive. Doesn't matter if there is another
+    // page on top of it. They get registered only one time whene the Home page
+    // loads, so there isn't the need to clear them or perform other checks.
+    this.electronProvider.ipcRenderer.on(requestModel.ACTION_HELO, (e, request: requestModelHelo) => {
+      this.ngZone.run(() => this.lastToast.present('A connection was successfully established with ' + request.deviceName));
 
-      this.electronProvider.ipcRenderer.on(requestModel.ACTION_PUT_SCAN_SESSIONS, (e, request: requestModelPutScanSessions) => {
-        this.ngZone.run(() => {
-          let initialNoScans = this.scanSessions.map(scanSession => scanSession.scannings.length).reduce((a, b) => a + b, 0);
-          request.scanSessions.forEach(newScanSession => {
-            let scanSessionIndex = this.scanSessions.findIndex(x => x.id == newScanSession.id); // this is O(n^2) but i don't care since we don't have > 500 scan sessions, and the scanSessions array gets traversed all the way to the end only for the new created scan sessions
-            if (scanSessionIndex != -1) {
-              console.log('@ Scan session already present, merging the scannings')
-              let existingScanSession = this.scanSessions[scanSessionIndex];
+      // older versions of the app didn't send the version number
+      if (!request.version) {
+        this.showVersionMismatch();
+        return;
+      }
 
-              if (existingScanSession.scannings.length == 0) {
-                console.log('@ scannings array emtpy -> assigning the whole array')
-                existingScanSession.scannings = newScanSession.scannings;
-              } else if (existingScanSession.scannings.length != 0 && newScanSession.scannings.length == 1) {
-                console.log('@ scannings array not emtpy -> adding only the new scans (the new scansessions contain only one scan -> unshift)')
-                let newScan = newScanSession.scannings[0];
-                let alreadyExistingScanIndex = existingScanSession.scannings.findIndex(x => x.id == newScan.id); // performance can improved by reversing the scannings array, but the findIndex will return a complementar index
+      // let appVersion = new SemVer(request.version);
+      // if (lt(appVersion, 'x.x.x')) {
+      // this.showVersionMismatch();
+      // }
+    });
 
-                if (alreadyExistingScanIndex == -1) {
-                  existingScanSession.scannings.unshift(newScan)
-                  this.lastInsertedScanIndex = 0;
-                } else {
-                  this.lastInsertedScanIndex = alreadyExistingScanIndex;
-                }
+    this.electronProvider.ipcRenderer.on(requestModel.ACTION_PUT_SCAN_SESSIONS, (e, request: requestModelPutScanSessions) => {
+      this.ngZone.run(() => {
+        let initialNoScans = this.scanSessions.map(scanSession => scanSession.scannings.length).reduce((a, b) => a + b, 0);
+        request.scanSessions.forEach(newScanSession => {
+          let scanSessionIndex = this.scanSessions.findIndex(x => x.id == newScanSession.id); // this is O(n^2) but i don't care since we don't have > 500 scan sessions, and the scanSessions array gets traversed all the way to the end only for the new created scan sessions
+          if (scanSessionIndex != -1) {
+            console.log('@ Scan session already present, merging the scannings')
+            let existingScanSession = this.scanSessions[scanSessionIndex];
+
+            if (existingScanSession.scannings.length == 0) {
+              console.log('@ scannings array emtpy -> assigning the whole array')
+              existingScanSession.scannings = newScanSession.scannings;
+            } else if (existingScanSession.scannings.length != 0 && newScanSession.scannings.length == 1) {
+              console.log('@ scannings array not emtpy -> adding only the new scans (the new scansession contains only one scan -> unshift)')
+              let newScan = newScanSession.scannings[0];
+              let alreadyExistingScanIndex = existingScanSession.scannings.findIndex(x => x.id == newScan.id); // performance can improved by reversing the scannings array, but the findIndex will return a complementar index
+
+              if (alreadyExistingScanIndex == -1) {
+                // I don't know why unshift doesn't work, so i'll use concat even though it is less performant
+                // existingScanSession.scannings.unshift(newScan)
+                existingScanSession.scannings = newScanSession.scannings.concat(existingScanSession.scannings);
+                this.lastInsertedScanIndex = 0;
               } else {
-                console.log('@ scannings array not emtpy -> adding only the new scans')
-
-                // I expect to receive the scans sorted by id desc, so i copy
-                // to the local scan list only the scans that have an id  
-                // greater than the one that has the lastest received scan.
-                let lastReceivedScanId = existingScanSession.scannings[0].id;
-                let alreadyExistingScanIndex = newScanSession.scannings.findIndex(newScan => newScan.id <= lastReceivedScanId); // performance can improved by reversing the scannings array, but the findIndex will return a complementar index
-
-                console.log('@ lastReceivedScanId = ' + lastReceivedScanId + ' alreadyExistingScanIndex = ' + alreadyExistingScanIndex)
-
-                if (alreadyExistingScanIndex != -1) { // if some scan is already present => i do not include them
-                  console.log('@ the list of the received scans includes scans that are already present, slicing the array from 0 to ' + alreadyExistingScanIndex)
-
-                  let newScans: ScanModel[] = newScanSession.scannings.slice(0, alreadyExistingScanIndex);
-                  existingScanSession.scannings = newScans.concat(existingScanSession.scannings)
-                } else { // if the scans are all new, i copy all of them
-                  console.log('@ merging the scans as they are: ', newScanSession.scannings, existingScanSession.scannings)
-
-                  existingScanSession.scannings = newScanSession.scannings.concat(existingScanSession.scannings)
-                  // what if newScanSession.scannings is empty?
-                }
+                this.lastInsertedScanIndex = alreadyExistingScanIndex;
               }
             } else {
-              this.scanSessions.unshift(newScanSession);
-              this.selectedScanSession = this.scanSessions[0];
+              console.log('@ scannings array not emtpy -> adding only the new scans')
+
+              // I expect to receive the scans sorted by id desc, so i copy
+              // to the local scan list only the scans that have an id
+              // greater than the one that has the lastest received scan.
+              let lastReceivedScanId = existingScanSession.scannings[0].id;
+              let alreadyExistingScanIndex = newScanSession.scannings.findIndex(newScan => newScan.id <= lastReceivedScanId); // performance can improved by reversing the scannings array, but the findIndex will return a complementar index
+
+              console.log('@ lastReceivedScanId = ' + lastReceivedScanId + ' alreadyExistingScanIndex = ' + alreadyExistingScanIndex)
+
+              if (alreadyExistingScanIndex != -1) { // if some scan is already present => i do not include them
+                console.log('@ the list of the received scans includes scans that are already present, slicing the array from 0 to ' + alreadyExistingScanIndex)
+
+                let newScans: ScanModel[] = newScanSession.scannings.slice(0, alreadyExistingScanIndex);
+                existingScanSession.scannings = newScans.concat(existingScanSession.scannings)
+              } else { // if the scans are all new, i copy all of them
+                console.log('@ merging the scans as they are: ', newScanSession.scannings, existingScanSession.scannings)
+
+                existingScanSession.scannings = newScanSession.scannings.concat(existingScanSession.scannings)
+                // what if newScanSession.scannings is empty?
+              }
+            }
+          } else {
+            this.scanSessions.unshift(newScanSession);
+            this.selectedScanSession = this.scanSessions[0];
+            if (this.scanSessionsContainer) {
               this.scanSessionsContainer.scrollToTop();
             }
-            this.animateLast = true; setTimeout(() => this.animateLast = false, 1200);
-            this.selectedScanSession = this.scanSessions[scanSessionIndex == -1 ? 0 : scanSessionIndex];
-          })
+          }
+          this.animateLast = true; setTimeout(() => this.animateLast = false, 1200);
+          this.selectedScanSession = this.scanSessions[scanSessionIndex == -1 ? 0 : scanSessionIndex];
+        })
 
-          let finalNoScans = this.scanSessions.map(scanSession => scanSession.scannings.length).reduce((a, b) => a + b, 0);
-          this.licenseProvider.limitMonthlyScans(finalNoScans - initialNoScans);
+        let finalNoScans = this.scanSessions.map(scanSession => scanSession.scannings.length).reduce((a, b) => a + b, 0);
+        this.licenseProvider.limitMonthlyScans(finalNoScans - initialNoScans);
 
+        this.save();
+      }); // ngZone
+
+      // if (request.scan.repeated) {
+      //   let scanIndex = this.scanSessions[scanSessionIndex].scannings.findIndex(x => x.id == request.scan.id);
+      //   if (scanIndex == -1) {
+      //     this.scanSessions[scanSessionIndex].scannings.unshift(request.scan);
+      //   }
+      // }
+    })
+
+    this.electronProvider.ipcRenderer.on(requestModel.ACTION_DELETE_SCAN, (e, request: requestModelDeleteScan) => {
+      this.ngZone.run(() => {
+
+        let scanSessionIndex = this.scanSessions.findIndex(x => x.id == request.scanSessionId);
+        if (scanSessionIndex != -1) {
+          let scanIndex = this.scanSessions[scanSessionIndex].scannings.findIndex(x => x.id == request.scan.id);
+          this.scanSessions[scanSessionIndex].scannings.splice(scanIndex, 1);
+        }
+        this.save();
+      });
+    });
+
+    this.electronProvider.ipcRenderer.on(requestModel.ACTION_DELETE_SCAN_SESSION, (e, request: requestModelDeleteScanSessions) => {
+      this.ngZone.run(() => {
+        if (this.selectedScanSession && request.scanSessionIds.findIndex(x => x == this.selectedScanSession.id) != -1) {
+          this.selectedScanSession = null;
+        }
+        this.scanSessions = this.scanSessions.filter(x => request.scanSessionIds.indexOf(x.id) < 0);
+        this.save();
+      });
+    });
+
+    this.electronProvider.ipcRenderer.on(requestModel.ACTION_UPDATE_SCAN_SESSION, (e, request: requestModelUpdateScanSession) => {
+      this.ngZone.run(() => {
+        let scanSessionIndex = this.scanSessions.findIndex(x => x.id == request.scanSessionId);
+        if (scanSessionIndex != -1) {
+          this.scanSessions[scanSessionIndex].name = request.scanSessionName;
+          this.scanSessions[scanSessionIndex].date = request.scanSessionDate;
           this.save();
-        }); // ngZone
+        }
+      });
+    });
 
-        // if (request.scan.repeated) {
-        //   let scanIndex = this.scanSessions[scanSessionIndex].scannings.findIndex(x => x.id == request.scan.id);
-        //   if (scanIndex == -1) {
-        //     this.scanSessions[scanSessionIndex].scannings.unshift(request.scan);
-        //   }
-        // } 
+    this.electronProvider.ipcRenderer.on(requestModel.ACTION_CLEAR_SCAN_SESSIONS, (e, request: requestModelClearScanSessions) => {
+      this.ngZone.run(() => {
+        let scanSessionIndex = this.scanSessions = [];
+        this.save();
+      });
+    });
+
+    this.electronProvider.ipcRenderer.on('find', (e, data: {}) => {
+      this.ngZone.run(() => {
+        this.hideSearchBar = false;
+        setTimeout(() => {
+          this.searchbar.setFocus();
+        }, 250)
       })
+    });
+  }
 
-      this.electronProvider.ipcRenderer.on(requestModel.ACTION_DELETE_SCAN, (e, request: requestModelDeleteScan) => {
-        this.ngZone.run(() => {
-
-          let scanSessionIndex = this.scanSessions.findIndex(x => x.id == request.scanSessionId);
-          if (scanSessionIndex != -1) {
-            let scanIndex = this.scanSessions[scanSessionIndex].scannings.findIndex(x => x.id == request.scan.id);
-            this.scanSessions[scanSessionIndex].scannings.splice(scanIndex, 1);
-          }
-          this.save();
-        });
-      });
-
-      this.electronProvider.ipcRenderer.on(requestModel.ACTION_DELETE_SCAN_SESSION, (e, request: requestModelDeleteScanSessions) => {
-        this.ngZone.run(() => {
-          if (this.selectedScanSession && request.scanSessionIds.findIndex(x => x == this.selectedScanSession.id) != -1) {
-            this.selectedScanSession = null;
-          }
-          this.scanSessions = this.scanSessions.filter(x => request.scanSessionIds.indexOf(x.id) < 0);
-          this.save();
-        });
-      });
-
-      this.electronProvider.ipcRenderer.on(requestModel.ACTION_UPDATE_SCAN_SESSION, (e, request: requestModelUpdateScanSession) => {
-        this.ngZone.run(() => {
-          let scanSessionIndex = this.scanSessions.findIndex(x => x.id == request.scanSessionId);
-          if (scanSessionIndex != -1) {
-            this.scanSessions[scanSessionIndex].name = request.scanSessionName;
-            this.scanSessions[scanSessionIndex].date = request.scanSessionDate;
-            this.save();
-          }
-        });
-      });
-
-      this.electronProvider.ipcRenderer.on(requestModel.ACTION_CLEAR_SCAN_SESSIONS, (e, request: requestModelClearScanSessions) => {
-        this.ngZone.run(() => {
-          let scanSessionIndex = this.scanSessions = [];
-          this.save();
-        });
-      });
+  private accessibilityAlert: Alert;
+  checkAccessibilityPermission() {
+    if (this.accessibilityAlert) {
+      this.accessibilityAlert.dismiss();
     }
-    this.scanSessions = this.store.get(Config.STORAGE_SCAN_SESSIONS, []);
+
+    if (!this.electronProvider.isTrustedAccessibilityClient(false)) {
+      this.accessibilityAlert = this.alertCtrl.create({
+        title: 'Allow access', message:
+          `In order to enable the "keyboard emulation" feature, ` + Config.APP_NAME + ` needs your permission to control the computer.
+          <br/><br/>When you'll click Next, the System Preferences will open.
+          <br/><br/>Please make you sure that ` + Config.APP_NAME + ` <u>is present</u> in the allowed list and that it <u>is checked</u>`,
+        buttons: [{
+          text: 'Next', handler: (opts: AlertOptions) => {
+            this.electronProvider.isTrustedAccessibilityClient(true);
+            setTimeout(() => this.checkAccessibilityPermission(), 1000 * 60)
+          }
+        }]
+      });
+      this.accessibilityAlert.present();
+    }
   }
 
   onSettingsClick() {
@@ -301,9 +347,15 @@ export class HomePage {
 
 
   onClearAllClick() {
-    this.scanSessions = [];
-    this.selectedScanSession = null;
-    this.save();
+    this.alertCtrl.create({
+      title: 'Delete all scan sessions?', message: 'The scans session will be deleted from the server. You can send them again from your smartphone.', buttons: [{ text: 'Cancel', role: 'cancel' }, {
+        text: 'Delete all', handler: (opts: AlertOptions) => {
+          this.scanSessions = [];
+          this.selectedScanSession = null;
+          this.save();
+        }
+      }]
+    }).present();
   }
 
   connectedClientsClick(event) {
@@ -330,6 +382,30 @@ export class HomePage {
 
   public getLocaleDate(date) {
     return new Date(date).toLocaleString();
+  }
+
+  public getScanText(scan) {
+    return ScanModel.ToString(scan);
+  }
+
+  private isVersionMismatchDialogVisible = false;
+  private showVersionMismatch() {
+    if (!this.isVersionMismatchDialogVisible) {
+      let dialog = this.alertCtrl.create({
+        title: 'Server/app version mismatch',
+        message: 'Please update both app and server, otherwise they may not work properly.<br><br>Server can be downloaded at ' + Config.WEBSITE_NAME,
+        buttons: [{ text: 'Cancel', role: 'cancel' }, {
+          text: 'Download', handler: () => {
+            this.electronProvider.shell.openExternal(Config.URL_DOWNLOAD_SERVER)
+          }
+        }]
+      });
+      dialog.didLeave.subscribe(() => {
+        this.isVersionMismatchDialogVisible = false;
+      })
+      this.isVersionMismatchDialogVisible = true;
+      dialog.present();
+    }
   }
 }
 
@@ -379,6 +455,7 @@ export class ScanSessionContextMenuPopover {
     public navParams: NavParams,
     public electronProvider: ElectronProvider,
     public events: Events,
+    private alertCtrl: AlertController,
   ) {
     this.store = new this.electronProvider.ElectronStore();
     this.scanSession = this.navParams.get('scanSession');
@@ -391,16 +468,34 @@ export class ScanSessionContextMenuPopover {
   exportAsCSV(index) {
     this.close()
 
-    let content = [];
-    let settings = this.store.get(Config.STORAGE_SETTINGS, new SettingsModel());
+    this.alertCtrl.create({
+      title: 'Export options',
+      // message: '<b>test</b>',
+      inputs: [{ type: 'checkbox', checked: true, label: 'Include only the text components', value: 'onlyTextComponents' }],
+      buttons: [
+        { text: 'Cancel', role: 'cancel' },
+        {
+          text: 'Export', handler: (opts: AlertOptions) => {
+            let content = [];
+            let settings = this.store.get(Config.STORAGE_SETTINGS, new SettingsModel());
 
-    content.push(Papa.unparse(this.scanSession.scannings.map(x => { return { 'text': x.text } }), {
-      quotes: settings.enableQuotes,
-      delimiter: ",",
-      newline: settings.newLineCharacter.replace('CR', '\r').replace('LF', '\n')
-    }));
-    let file = new Blob(content, { type: 'text/csv;charset=utf-8' });
-    saveAs(file, this.scanSession.name + ".csv");
+            content.push(Papa.unparse(this.scanSession.scannings.map(scan => {
+              if (opts[0] == 'onlyTextComponents') {
+                return scan.outputBlocks
+                  .filter(outputBlock => (outputBlock.type != 'key' && outputBlock.type != 'delay'))
+                  .map(outputBlock => outputBlock.value)
+              }
+              return scan.outputBlocks.map(outputBlock => outputBlock.value);
+            }), {
+                quotes: settings.enableQuotes,
+                delimiter: ",",
+                newline: settings.newLineCharacter.replace('CR', '\r').replace('LF', '\n')
+              }));
+            let file = new Blob(content, { type: 'text/csv;charset=utf-8' });
+            saveAs(file, this.scanSession.name + ".csv");
+          }
+        }]
+    }).present();
   }
 
   delete() {

@@ -1,21 +1,38 @@
 import { app, BrowserWindow, Menu, MenuItemConstructorOptions, nativeImage, Tray } from 'electron';
 import { autoUpdater } from 'electron-updater';
+import * as http from 'http';
 import * as _path from 'path';
 import * as WebSocket from 'ws';
-
 import { Config } from '../config';
 import { Handler } from '../models/handler.model';
 import { SettingsHandler } from './settings.handler';
+
 
 export class UiHandler implements Handler {
     public tray: Tray = null;
     public mainWindow: BrowserWindow; // Keep a global reference of the window object, if you don't, the window will be closed automatically when the JavaScript object is garbage collected.
     private settingsHandler: SettingsHandler;
     private ipcClient;
-    private isQuitting = false;
+    /**
+     * quitImmediately must be set to TRUE before calling app.quit().
+     * 
+     * This variable is used to detect when the user clicks the **close button** of the window:
+     * since the 'close' event may fire for various reasons, everytime that quitImmediately is set 
+     * to FALSE we can assume that the user has clicked the close button.
+     */
+    public quitImmediately = false;
 
     private static instance: UiHandler;
     private constructor(settingsHandler: SettingsHandler, ) {
+        if (!app.requestSingleInstanceLock()) {
+            this.quitImmediately = true;
+            app.quit();
+            return;
+        }
+        app.on('second-instance', (event, commandLine, workingDirectory) => {
+            this.bringWindowUp(); // Someone tried to run a second instance, we should focus our window.
+        })
+
         this.settingsHandler = settingsHandler;
         settingsHandler.onSettingsChanged.subscribe((settings) => {
             this.updateTray();
@@ -26,7 +43,7 @@ export class UiHandler implements Handler {
         });
         app.on('window-all-closed', () => {  // Quit when all windows are closed.            
             // if (process.platform !== 'darwin') { // On OS X it is common for applications and their menu bar to stay active until the user quits explicitly with Cmd + Q, but since Barcode to PC needs the browser windows to perform operation on the localStorage this is not allowed
-            this.quit()
+            app.quit()
             // }
         })
         // app.on('activate', () => {
@@ -58,7 +75,8 @@ export class UiHandler implements Handler {
                     // { label: 'Enable realtime ', type: 'radio', checked: false },        
                     {
                         label: 'Exit', click: () => {
-                            this.quit();
+                            this.quitImmediately = true;
+                            app.quit();
                         }
                     },
                 ];
@@ -98,7 +116,7 @@ export class UiHandler implements Handler {
             if (this.mainWindow.isMinimized()) this.mainWindow.restore();
             this.mainWindow.show();
             this.mainWindow.focus();
-            if (app.dock != null ) {
+            if (app.dock != null) {
                 app.dock.show();
             }
         }
@@ -127,11 +145,6 @@ export class UiHandler implements Handler {
             this.mainWindow.loadURL(_path.join('file://', __dirname, '../../../ionic/www/index.html'));
         }
 
-        app.requestSingleInstanceLock()
-        app.on('second-instance', (argv, cwd) => {
-            this.bringWindowUp(); // Someone tried to run a second instance, we should focus our window.
-        })
-
         if (process.platform === 'darwin') {
             let template: MenuItemConstructorOptions[] = [
                 {
@@ -147,7 +160,8 @@ export class UiHandler implements Handler {
                         { type: 'separator' },
                         {
                             label: 'Quit ' + Config.APP_NAME, click: (menuItem, browserWindow, event) => {
-                                this.quit();
+                                this.quitImmediately = true;
+                                app.quit();
                             }
                         }
                     ]
@@ -184,7 +198,6 @@ export class UiHandler implements Handler {
                     submenu: [
                         { role: 'minimize' },
                         { role: 'close' },
-                        { role: 'hide' },
                         { role: 'zoom' },
                         { type: 'separator' },
                         { role: 'front' }
@@ -205,14 +218,21 @@ export class UiHandler implements Handler {
         }
 
         this.mainWindow.on('close', (event) => { // occours when app.quit() is called or when the app is closed by the OS (eg. click close button)
-            if (!this.isQuitting) {
+            event.returnValue = true;
+            if (this.quitImmediately) {
+                return true;
+            }
+
+            if (this.settingsHandler.enableTray) {
                 event.preventDefault();
                 this.mainWindow.hide();
-                if (app.dock != null ) {
+                if (app.dock != null) {
                     app.dock.hide();
                 }
+                event.returnValue = false
+                return false;
             }
-            return false;
+            return true;
         });
 
         // Emitted when the window is closed.
@@ -224,17 +244,40 @@ export class UiHandler implements Handler {
             //     client.close();
             //     // }
             // });
-            // this.quit();
+            // app.quit();
         })
 
         if (this.mainWindow.isVisible()) {
-            if (app.dock != null ) {
+            if (app.dock != null) {
                 app.dock.show();
             }
         }
+
+        const selectionMenu = Menu.buildFromTemplate([
+            { role: 'copy' },
+            { type: 'separator' },
+            { role: 'selectall' },
+        ]);
+
+        const inputMenu = Menu.buildFromTemplate([
+            { role: 'cut' },
+            { role: 'copy' },
+            { role: 'paste' },
+            { type: 'separator' },
+            { role: 'selectall' },
+        ])
+
+        this.mainWindow.webContents.on('context-menu', (e, props) => {
+            const { selectionText, isEditable } = props;
+            if (isEditable) {
+                inputMenu.popup({ window: this.mainWindow });
+            } else if (selectionText && selectionText.trim() !== '') {
+                selectionMenu.popup({ window: this.mainWindow });
+            }
+        })
     }
 
-    onWsMessage(ws: WebSocket, message: any) {
+    onWsMessage(ws: WebSocket, message: any, req: http.IncomingMessage) {
         throw new Error("Method not implemented.");
     }
     onWsClose(ws: WebSocket) {
@@ -246,10 +289,5 @@ export class UiHandler implements Handler {
 
     setIpcClient(ipcClient) {
         this.ipcClient = ipcClient;
-    }
-
-    private quit() {
-        this.isQuitting = true;
-        app.quit();
     }
 }

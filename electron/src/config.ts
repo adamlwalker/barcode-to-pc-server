@@ -12,18 +12,18 @@ export class Config {
         title: Config.APP_NAME,
     };
 
-    public static WEB_SITE_NAME = 'barcodetopc.com';
+    public static WEBSITE_NAME = 'barcodetopc.com';
 
     public static URL_WEBSITE = 'https://barcodetopc.com';
 
     public static URL_LICENSE_SERVER = 'https://license.barcodetopc.com';
-    public static URL_SUBSCRIPTION_CHECK = Config.URL_LICENSE_SERVER + '/subscription/check';
-    public static URL_SUBSCRIPTION_DEACTIVATE = Config.URL_LICENSE_SERVER + '/subscription/remove';
+    public static URL_ORDER_CHECK = Config.URL_LICENSE_SERVER + '/order/check';
+    public static URL_ORDER_DEACTIVATE = Config.URL_LICENSE_SERVER + '/order/remove';
 
     public static URL_PRICING = Config.URL_WEBSITE + '/pricing/';
-    public static URL_DOWNLOAD = Config.URL_WEBSITE + '/#download';
-    public static URL_FAQ = Config.URL_WEBSITE + '/faq.html';
-    public static URL_FAQ_APP_DOESNT_FIND_COMPUTER = Config.URL_WEBSITE + '/faq.html#app-doesnt-find-computer';
+    public static URL_DOWNLOAD_SERVER = Config.URL_WEBSITE + '/#download-server';
+    public static URL_FAQ = Config.URL_WEBSITE + '/frequently-asked-questions/';
+    public static URL_FAQ_APP_DOESNT_FIND_COMPUTER = Config.URL_FAQ + '#app-doesnt-find-computer';
     public static URL_API = Config.URL_WEBSITE + "http-api.json"
     public static URL_GITHUB_SERVER = 'https://github.com/fttx/barcode-to-pc-server';
     public static URL_GITHUB_APP = 'https://github.com/fttx/barcode-to-pc-app';
@@ -31,7 +31,7 @@ export class Config {
     public static URL_PAIR = 'http://app.barcodetopc.com';
 
     public static EMAIL_SUPPORT = 'support@barcodetopc.com';
-    public static EMAIL_ORDERS = 'orders@fastspring.com';
+    public static EMAIL_FASTSPRING = 'orders@fastspring.com';
 
     // Constants
     public static STORAGE_SUBSCRIPTION = 'subscription';
@@ -43,4 +43,5 @@ export class Config {
     public static STORAGE_FIRST_CONNECTION_DATE = 'storage_first_connection_date';
     public static STORAGE_SCAN_SESSIONS = 'storage_scan_sessions';
     public static STORAGE_SETTINGS = 'storage_settings';
+    public static STORAGE_LAST_VERSION = 'storage_last_version';
 }

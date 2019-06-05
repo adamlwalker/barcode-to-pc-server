@@ -3,6 +3,7 @@ import { Storage } from '@ionic/storage';
 import ElectronStore from 'electron-store';
 import { Config } from '../../../../electron/src/config';
 import { ElectronProvider } from '../electron/electron';
+import { SettingsModel } from '../../models/settings.model';
 
 /*
   Generated class for the UtilsProvider provider.
@@ -49,7 +50,7 @@ export class UtilsProvider {
 
   private getLocalAddresses(): Promise<string> {
     return new Promise((resolve, reject) => {
-      this.electronProvider.ipcRenderer.on('localAddresses', (e, localAddresses) => {
+      this.electronProvider.ipcRenderer.once('localAddresses', (e, localAddresses) => {
         resolve(localAddresses);
       });
       this.electronProvider.ipcRenderer.send('getLocalAddresses');
@@ -59,7 +60,7 @@ export class UtilsProvider {
 
   private getDefaultLocalAddress(): Promise<string> {
     return new Promise((resolve, reject) => {
-      this.electronProvider.ipcRenderer.on('defaultLocalAddress', (e, defaultLocalAddress) => {
+      this.electronProvider.ipcRenderer.once('defaultLocalAddress', (e, defaultLocalAddress) => {
         resolve(defaultLocalAddress);
       });
       this.electronProvider.ipcRenderer.send('getDefaultLocalAddress');
@@ -69,7 +70,7 @@ export class UtilsProvider {
 
   private getHostname(): Promise<string> {
     return new Promise((resolve, reject) => {
-      this.electronProvider.ipcRenderer.on('hostname', (e, hostname) => {
+      this.electronProvider.ipcRenderer.once('hostname', (e, hostname) => {
         resolve(hostname);
       });
       this.electronProvider.ipcRenderer.send('getHostname');
@@ -117,7 +118,11 @@ export class UtilsProvider {
 
     let settings = JSON.parse(localStorage.getItem(SETTINGS));
     if (settings != null) {
-      this.store.set(Config.STORAGE_SETTINGS, settings);
+      let newSettings = new SettingsModel();
+      Object.keys(settings).forEach(key => {
+        newSettings[key] = settings[key];
+      })
+      this.store.set(Config.STORAGE_SETTINGS, newSettings);
       localStorage.removeItem(SETTINGS);
     }
   }

@@ -1,12 +1,12 @@
 import { app, ipcMain } from 'electron';
 import * as WebSocket from 'ws';
-
 import { Config } from './config';
 import { ConnectionHandler } from './handlers/connection.handler';
 import { ScansHandler } from './handlers/scans.handler';
 import { SettingsHandler } from './handlers/settings.handler';
 import { UiHandler } from './handlers/ui.handler';
 import { UpdateHandler } from './handlers/update.handler';
+import * as http from 'http';
 
 
 let wss = null;
@@ -14,7 +14,7 @@ const settingsHandler = SettingsHandler.getInstance();
 const uiHandler = UiHandler.getInstance(settingsHandler);
 const scansHandler = ScansHandler.getInstance(settingsHandler, uiHandler);
 const connectionHandler = ConnectionHandler.getInstance(uiHandler, settingsHandler);
-const updateHandler = UpdateHandler.getInstance();
+const updateHandler = UpdateHandler.getInstance(uiHandler, settingsHandler);
 
 ipcMain
     .on('pageLoad', (event, arg) => { // the renderer will send a 'pageLoad' message once the index.html document is loaded. (implies that the mainWindow exists)       
@@ -23,14 +23,16 @@ ipcMain
         }
 
         let ipcClient = event.sender;
-        
+
         wss = new WebSocket.Server({ port: Config.PORT });
         connectionHandler.announceServer();
+        // TODO: get rid of setIpcClients, they generate unknown of unknowns
         connectionHandler.setIpcClient(ipcClient);
         uiHandler.setIpcClient(ipcClient);
+        updateHandler.setIpcClient(ipcClient);
 
         // wss events should be registered immediately
-        wss.on('connection', (ws, req) => {
+        wss.on('connection', (ws, req: http.IncomingMessage) => {
             console.log("ws(incoming connection)", req.connection.remoteAddress)
             // const clientAddress = req.connection.remoteAddress;
 
@@ -44,8 +46,8 @@ ipcMain
 
                 let messageObj = JSON.parse(message.toString());
 
-                scansHandler.onWsMessage(ws, messageObj);
-                connectionHandler.onWsMessage(ws, messageObj);
+                scansHandler.onWsMessage(ws, messageObj, req);
+                connectionHandler.onWsMessage(ws, messageObj, req);
 
                 ipcClient.send(messageObj.action, messageObj); // forward ws messages to ipc
             });
@@ -69,7 +71,6 @@ ipcMain
             closeServer();
             app.quit(); // TODO: keep the server running (this can't be done at the moment because the scannings are saved in the browserWindow localStorage)
         });
-        updateHandler.checkUpdates();
     })
 
 function closeServer() {

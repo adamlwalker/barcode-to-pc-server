@@ -4,10 +4,10 @@ import ElectronStore from 'electron-store';
 import { Alert, AlertController, AlertOptions } from 'ionic-angular';
 import { Config } from '../../../../electron/src/config';
 import { DeviceModel } from '../../models/device.model';
+import { SettingsModel } from '../../models/settings.model';
 import { DevicesProvider } from '../devices/devices';
 import { ElectronProvider } from '../electron/electron';
 import { UtilsProvider } from '../utils/utils';
-import { SettingsModel } from '../../models/settings.model';
 
 
 /**
@@ -32,9 +32,9 @@ import { SettingsModel } from '../../models/settings.model';
 @Injectable()
 export class LicenseProvider {
   public static PLAN_FREE = 'barcode-to-pc-free';
-  public static PLAN_BASIC = 'barcode-to-pc-basic';
-  public static PLAN_PRO = 'barcode-to-pc-pro';
-  public static PLAN_UNLIMITED = 'barcode-to-pc-unlimited';
+  public static PLAN_BASIC = 'barcode-to-pc-basic-license';
+  public static PLAN_PRO = 'barcode-to-pc-pro-license';
+  public static PLAN_UNLIMITED = 'barcode-to-pc-unlimited-license';
 
   public activePlan = LicenseProvider.PLAN_FREE;
   public serial = '';
@@ -58,7 +58,7 @@ export class LicenseProvider {
 
     this.devicesProvider.onDeviceDisconnect().subscribe(device => {
       if (this.activePlan == LicenseProvider.PLAN_FREE) {
-        this.showUpgradeDialog('commercialUse', 'Free plan', 'Your current plan is for non-commercial use only. Please subscribe to a paid plan if you are using Barcode to PC for commercial purposes')
+        this.showUpgradeDialog('commercialUse', 'Free plan', 'Your current plan is for non-commercial use only. Please switch to a paid plan if you are using Barcode to PC for commercial purposes')
       }
     })
 
@@ -104,9 +104,10 @@ export class LicenseProvider {
     let nextChargeDate = this.store.get(Config.STORAGE_NEXT_CHARGE_DATE);
     let canResetScanCount = now > nextChargeDate;
 
-    if (this.activePlan == LicenseProvider.PLAN_FREE && canResetScanCount) {
+    // The scanCount is resetted based on the server first run date
+    if (canResetScanCount) {
       this.store.set(Config.STORAGE_MONTHLY_SCAN_COUNT, 0);
-      this.store.set(Config.STORAGE_NEXT_CHARGE_DATE, new Date().getTime() + 1000 * 60 * 60 * 24 * 31); // NOW() + 1 month      
+      this.store.set(Config.STORAGE_NEXT_CHARGE_DATE, this.generateNextChargeDate());
     }
 
     // Do not bother the license-server if there isn't an active subscription
@@ -117,31 +118,23 @@ export class LicenseProvider {
       return;
     }
 
-    this.http.post(Config.URL_SUBSCRIPTION_CHECK, {
+    this.http.post(Config.URL_ORDER_CHECK, {
       serial: this.serial,
       uuid: this.electronProvider.uuid
     }).subscribe(value => {
       this.store.set(Config.STORAGE_FIRST_LICENSE_CHECK_FAIL_DATE, 0);
       if (value['active'] == true) {
 
-        // The first time that the request is performed the license-server will
-        // do a CLAIM procedure that doesn't return the plan name. From the
-        // second request on it will respond also with the active plan name.
-        if (!value['plan']) {
-          // If the plan name isn't in the response it means that this was the
-          // first request and that the CLAIM procedure has been executed
-          // successfully, so i can do a second request to retreive the plan name.
-          this.updateSubscriptionStatus(serial);
-        } else {
-          this.activePlan = value['plan'];
+        // If the plan name changed it means that a plan UPGRADE has been performed
+        if (this.activePlan != value['plan']) {
+          console.log('upgrade')
+          this.store.set(Config.STORAGE_NEXT_CHARGE_DATE, this.generateNextChargeDate());
           this.store.set(Config.STORAGE_SUBSCRIPTION, value['plan']);
-          this.store.set(Config.STORAGE_NEXT_CHARGE_DATE, value['nextChargeDate']);
-          if (serial) {
-            this.utilsProvider.showSuccessNativeDialog('The license has been activated successfully')
-          }
-          if (canResetScanCount) {
-            this.store.set(Config.STORAGE_MONTHLY_SCAN_COUNT, 0);
-          }
+          this.activePlan = value['plan'];
+        }
+
+        if (serial) {
+          this.utilsProvider.showSuccessNativeDialog('The license has been activated successfully')
         }
       } else {
         // When the license-server says that the subscription is not active
@@ -152,12 +145,11 @@ export class LicenseProvider {
       }
     }, (error: HttpErrorResponse) => {
       if (serial) {
-        if (error.status == 503) {
-          this.utilsProvider.showErrorNativeDialog('Unable to fetch the subscription information, try later (FS problem)');
-        } else {
-          this.deactivate();
-          this.utilsProvider.showErrorNativeDialog('Unable to activate the license. Please make you sure that your internet connection is active and try again. If the error persists please contact the support.');
-        }
+        // if (error.status == 503) {
+        //   this.utilsProvider.showErrorNativeDialog('Unable to fetch the subscription information, try later (FS problem)');
+        // } 
+        this.deactivate();
+        this.utilsProvider.showErrorNativeDialog('Unable to activate the license. Please make you sure that your internet connection is active and try again. If the error persists please contact the support.');
       } else {
         // Perhaps there is a connection problem, wait 15 days before asking the
         // user to enable the connection.
@@ -168,7 +160,7 @@ export class LicenseProvider {
         if (firstFailDate && (now - firstFailDate) > 1296000000) { //  15 days = 1296000000 ms
           this.store.set(Config.STORAGE_FIRST_LICENSE_CHECK_FAIL_DATE, 0);
           this.deactivate();
-          this.utilsProvider.showErrorNativeDialog('Unable to verify your subscription plan. Please make you sure that the computer has an active internet connection');
+          this.utilsProvider.showErrorNativeDialog('Unable to verify your license. Please make you sure that the computer has an active internet connection');
         } else {
           this.store.set(Config.STORAGE_FIRST_LICENSE_CHECK_FAIL_DATE, now);
         }
@@ -197,18 +189,20 @@ export class LicenseProvider {
       this.activePlan = LicenseProvider.PLAN_FREE;
       this.store.set(Config.STORAGE_SUBSCRIPTION, this.activePlan);
 
-      let settings = this.store.get(Config.STORAGE_SETTINGS, new SettingsModel());
+      let settings: SettingsModel = this.store.get(Config.STORAGE_SETTINGS, new SettingsModel());
       if (!this.canUseCSVAppend(false)) {
         settings.appendCSVEnabled = false;
       }
       if (!this.canUseQuantityParameter(false)) {
-        settings.typedString = settings.typedString.filter(x => x.value != 'quantity');
+        for (let i in settings.outputProfiles) {
+          settings.outputProfiles[i].outputBlocks = settings.outputProfiles[i].outputBlocks.filter(x => x.value != 'quantity');
+        }
       }
       this.store.set(Config.STORAGE_SETTINGS, settings);
     }
 
     if (clearSerial) {
-      this.http.post(Config.URL_SUBSCRIPTION_DEACTIVATE, {
+      this.http.post(Config.URL_ORDER_DEACTIVATE, {
         serial: this.serial,
         uuid: this.electronProvider.uuid
       }).subscribe(value => {
@@ -216,7 +210,7 @@ export class LicenseProvider {
         this.serial = '';
         this.store.set(Config.STORAGE_SERIAL, this.serial);
       }, (error: HttpErrorResponse) => {
-        this.utilsProvider.showErrorNativeDialog('Unable to deactivate your subscription plan. Please make you sure that the computer has an active internet connection');
+        this.utilsProvider.showErrorNativeDialog('Unable to deactivate the license. Please make you sure that the computer has an active internet connection');
       });
     } else {
       downgradeToFree();
@@ -224,14 +218,21 @@ export class LicenseProvider {
   }
 
   showPricingPage(refer) {
-    // customTypedString
-    let customTypedString = false;
+    // customOutputField
+    let customOutputField = false;
     let settings = this.store.get(Config.STORAGE_SETTINGS, new SettingsModel());
-    if (settings.typedString.length != 2 || settings.typedString.length >= 3) {
-      customTypedString = true;
-    } else if (settings.typedString.length == 2) {
-      let defaultSettings = new SettingsModel();
-      customTypedString = (settings.typedString[0].value != defaultSettings.typedString[0].value || settings.typedString[1].value != defaultSettings.typedString[1].value);
+    let defaultSettings = new SettingsModel();
+    if (settings.outputProfiles.length != 1) {
+      customOutputField = true;
+    } else {
+      if (settings.outputProfiles[0].length != 2) {
+        customOutputField = true;
+      } else {
+        if (settings.outputProfiles[0][0].value != defaultSettings.outputProfiles[0][0].value ||
+          settings.outputProfiles[0][1].value != defaultSettings.outputProfiles[0][1].value) {
+            customOutputField = true;
+        }
+      }
     }
 
     // scanLimitReached
@@ -257,7 +258,7 @@ export class LicenseProvider {
     this.electronProvider.shell.openExternal(
       this.utilsProvider.appendParametersToURL(Config.URL_PRICING, {
         currentPlan: this.activePlan,
-        customTypedString: customTypedString,
+        customOutputField: customOutputField,
         scanLimitReached: scanLimitReached,
         periodOfUseSinceFirstConnection: periodOfUseSinceFirstConnection,
         refer: refer,
@@ -272,7 +273,7 @@ export class LicenseProvider {
    */
   limitNOMaxConnectedDevices(device: DeviceModel, connectedDevices: DeviceModel[]) {
     if (connectedDevices.length > this.getNOMaxAllowedConnectedDevices()) {
-      let message = 'You\'ve reached the maximum number of connected devices for your current subscription plan';
+      let message = 'You\'ve reached the maximum number of connected devices for your current plan';
       this.devicesProvider.kickDevice(device, message);
       this.showUpgradeDialog('limitNOMaxConnectedDevices', 'Devices limit reached', message)
     }
@@ -289,7 +290,7 @@ export class LicenseProvider {
     this.store.set(Config.STORAGE_MONTHLY_SCAN_COUNT, count);
 
     if (count > this.getNOMaxAllowedScansPerMonth()) {
-      let message = 'You\'ve reached the maximum number of monthly scannings for your current subscription plan.';
+      let message = 'You\'ve reached the maximum number of monthly scans for your current plan.';
       this.devicesProvider.kickAllDevices(message);
       this.showUpgradeDialog('limitMonthlyScans', 'Monthly scans limit reached', message)
     }
@@ -309,7 +310,7 @@ export class LicenseProvider {
     }
 
     if (!available && showUpgradeDialog) {
-      this.showUpgradeDialog('canUseQuantityParameter', 'Upgrade', 'The quantity component isn\'t available with your current subscription plan.');
+      this.showUpgradeDialog('canUseQuantityParameter', 'Upgrade', 'The quantity component isn\'t available with your current plan.');
     }
     return available;
   }
@@ -327,7 +328,7 @@ export class LicenseProvider {
       case LicenseProvider.PLAN_UNLIMITED: available = true; break;
     }
     if (!available && showUpgradeDialog) {
-      this.showUpgradeDialog('canUseCSVAppend', 'Upgrade', 'This feature isn\'t available with your current subscription plan.');
+      this.showUpgradeDialog('canUseCSVAppend', 'Upgrade', 'This feature isn\'t available with your current plan.');
     }
     return available;
   }
@@ -352,8 +353,8 @@ export class LicenseProvider {
 
   getNOMaxAllowedScansPerMonth() {
     switch (this.activePlan) {
-      case LicenseProvider.PLAN_FREE: return 1000;
-      case LicenseProvider.PLAN_BASIC: return 2000;
+      case LicenseProvider.PLAN_FREE: return 300;
+      case LicenseProvider.PLAN_BASIC: return 1000;
       case LicenseProvider.PLAN_PRO: return 10000;
       case LicenseProvider.PLAN_UNLIMITED: return Number.MAX_SAFE_INTEGER;
     }
@@ -391,5 +392,9 @@ export class LicenseProvider {
     if (this.upgradeDialog != null) {
       this.upgradeDialog.dismiss();
     }
+  }
+
+  private generateNextChargeDate(): number {
+    return new Date().getTime() + 1000 * 60 * 60 * 24 * 31; // NOW() + 1 month      
   }
 }

@@ -1,9 +1,7 @@
 import { Injectable } from '@angular/core';
-import { ipcRenderer, remote, shell } from 'electron';
-import ElectronStore from 'electron-store'
+import { ipcRenderer, remote, shell, Menu, MenuItem } from 'electron';
+import ElectronStore from 'electron-store';
 import * as v5 from 'uuid/v5';
-import { Config } from '../../../../electron/src/config';
-import { SettingsModel } from '../../models/settings.model';
 
 declare var window: any;
 // If you import a module but never use any of the imported values other than as TypeScript types,
@@ -16,13 +14,15 @@ declare var window: any;
 @Injectable()
 export class ElectronProvider {
   public uuid = '';
-  
+
   ipcRenderer: typeof ipcRenderer;
   dialog: typeof remote.dialog;
   app: typeof remote.app;
   shell: typeof shell;
   process: typeof process;
   remote: typeof remote;
+  menu: typeof Menu;
+  menuItem: typeof MenuItem;
   ElectronStore: typeof ElectronStore;
   v5: typeof v5;
 
@@ -38,6 +38,8 @@ export class ElectronProvider {
       this.shell = electron.shell;
       this.process = electron.remote.process;
       this.remote = electron.remote;
+      this.menu = electron.remote.Menu;
+      this.menuItem = electron.remote.MenuItem;
       this.ElectronStore = electron.remote.require('electron-store');
       this.v5 = electron.remote.require('uuid/v5');
 
@@ -59,6 +61,13 @@ export class ElectronProvider {
 
   isDev() {
     return !this.isElectron() || (this.process && this.process.argv.indexOf('--dev') != -1);
+  }
+
+  isTrustedAccessibilityClient(prompt: boolean) {
+    if (!this.isElectron() || process.platform !== "darwin") { // always pass TRUE if the platform is not macOS
+      return true;
+    }
+    return this.remote.systemPreferences.isTrustedAccessibilityClient(false);
   }
 
 }

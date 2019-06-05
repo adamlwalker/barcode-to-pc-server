@@ -1,16 +1,16 @@
 import * as b from 'bonjour';
 import { app, dialog, ipcMain } from 'electron';
-import * as mdns from 'mdns';
+import * as http from 'http';
 import * as network from 'network';
 import * as os from 'os';
 import * as WebSocket from 'ws';
 
 import { requestModel, requestModelHelo } from '../../../ionic/src/models/request.model';
 import {
-    responseModelEnableQuantity,
     responseModelHelo,
     responseModelKick,
     responseModelPong,
+    responseModelUpdateOutputProfiles,
 } from '../../../ionic/src/models/response.model';
 import { SettingsModel } from '../../../ionic/src/models/settings.model';
 import { Config } from '../config';
@@ -18,13 +18,13 @@ import { Handler } from '../models/handler.model';
 import { SettingsHandler } from './settings.handler';
 import { UiHandler } from './ui.handler';
 
-const bonjour = b();
-
 export class ConnectionHandler implements Handler {
     public static EVENT_CODE_KICKED_OUT = 4001; // Used when the server kicks out a client
 
     private fallBackBonjour: b.Service;
-    private mdnsAd: mdns.Advertisement;
+    private mdnsAd: any;
+    private bonjour: any;
+
     private wsClients = {};
     private ipcClient;
 
@@ -54,18 +54,18 @@ export class ConnectionHandler implements Handler {
                 });
             }).on('getHostname', (event, arg) => {
                 event.sender.send('hostname', os.hostname());
-            }).on('kick', (event, data: ({deviceId: number, response: responseModelKick})) => {
+            }).on('kick', (event, data: ({ deviceId: number, response: responseModelKick })) => {
                 console.log('@Kick', data.deviceId)
                 if (data.deviceId in this.wsClients) {
                     this.wsClients[data.deviceId].send(JSON.stringify(data.response));
                 }
             })
-        // send enableQuantity to already connected clients
+        // send updateOutputProfiles to the already connected clients
         settingsHandler.onSettingsChanged.subscribe((settings: SettingsModel) => {
             for (let deviceId in this.wsClients) {
                 let ws = this.wsClients[deviceId];
-                ws.send(JSON.stringify(new responseModelEnableQuantity().fromObject({
-                    enable: this.settingsHandler.quantityEnabled
+                ws.send(JSON.stringify(new responseModelUpdateOutputProfiles().fromObject({
+                    outputProfiles: this.settingsHandler.outputProfiles
                 })));
             }
         });
@@ -80,30 +80,33 @@ export class ConnectionHandler implements Handler {
 
     announceServer() {
         try {
+            let mdns = require('mdns');
             this.mdnsAd = mdns.createAdvertisement(mdns.tcp('http'), Config.PORT);
-
             this.mdnsAd.start();
         } catch (ex) {
             console.log('node_mdns error, faillback to bonjour')
             dialog.showMessageBox(this.uiHandler.mainWindow, {
                 type: 'warning',
                 title: 'Error',
-                message: 'Apple Bonjour is missing.\nThe app may fail to detect automatically the server.\n\nTo remove this alert try to install ' + Config.APP_NAME + ' again with an administrator account and reboot your system.',
+                message: 'Apple Bonjour is missing.\nThe app may fail to detect automatically the server.\nIf instead it\'s working, you can ignore this message.\n\nTo remove this alert try to install ' + Config.APP_NAME + ' again with an administrator account and reboot your system.',
             });
-            this.fallBackBonjour = bonjour.publish({ name: Config.APP_NAME, type: 'http', port: Config.PORT })
-            this.fallBackBonjour.on('error', err => { // err is never set?
-                dialog.showMessageBox(this.uiHandler.mainWindow, {
-                    type: 'error',
-                    title: 'Error',
-                    message: 'An error occured while announcing the server.'
+            try {
+                this.bonjour = b();
+                this.fallBackBonjour = this.bonjour.publish({ name: Config.APP_NAME, type: 'http', port: Config.PORT })
+                this.fallBackBonjour.on('error', err => { // err is never set?
+                    dialog.showMessageBox(this.uiHandler.mainWindow, {
+                        type: 'error',
+                        title: 'Error',
+                        message: 'An error occured while announcing the server.'
+                    });
                 });
-            });
+            } catch (ex) { }
         }
     }
 
     removeServerAnnounce() {
         if (this.fallBackBonjour) {
-            bonjour.unpublishAll(() => { })
+            this.bonjour.unpublishAll(() => { })
         }
 
         if (this.mdnsAd) {
@@ -111,7 +114,7 @@ export class ConnectionHandler implements Handler {
         }
     }
 
-    onWsMessage(ws: WebSocket, message: any) {
+    onWsMessage(ws: WebSocket, message: any, req: http.IncomingMessage) {
         switch (message.action) {
             case requestModel.ACTION_PING: {
                 ws.send(JSON.stringify(new responseModelPong()));
@@ -123,7 +126,12 @@ export class ConnectionHandler implements Handler {
                 let response = new responseModelHelo();
                 response.fromObject({
                     version: app.getVersion(),
-                    quantityEnabled: this.settingsHandler.quantityEnabled
+                    outputProfiles: this.settingsHandler.outputProfiles,
+
+                    /**
+                     * @deprecated
+                     */
+                    quantityEnabled: false,
                 });
 
                 if (request && request.deviceId) {

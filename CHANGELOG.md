@@ -1,38 +1,7 @@
 # Changelog
 
-## [Unreleased]
-
-### Added
-
-* Continuous mode
-* Option to clear the server data
-* Quantity output component
-* Delay output componet
-* Other key output componet (to press keys like F1, DEL, etc.)
-* Append scannings to CSV file in realtime
-* Auto reconnect when the IP address changes
-* Minimizzation to tray icon
-* Button to delete scan sessions from the server
-* Support for CODE 32
-* Settings to enable/disable scan formats
-* Added a way to enter bacodes manually (by typing it)
-* OTG support (Open a scan session, type the barcode and press the ENTER key)
-* Repeat barcodes
-* Archive barcodes
-* Search (CTRL+F or CMD+F)
-* Support for Chinese characters (Select clipboard typeMethod) thanks to KaiYi
-
-### Fixed
-
-* DATE, DATE_TIME, etc. variable 'unknown' issue
-* Scan session name sync issue
-* Minor UI enachments
-
-<!-- ### Security -->
-
-
-
-<!-- ## [x.0.0] - 2019-mm-dd
+<!--
+## [vx.x.x] - Not released yet
 
 ### Added
 
@@ -44,7 +13,75 @@
 
 ### Fixed
 
-### Security -->
+### Security
+-->
+
+
+## [v3.1.0] - 2019-05-19
+
+### Added
+
+Output Profiles support (protocol only)
+
+## [v3.0.3] - 2019-03-07
+
+### Fixed
+
+* Multi-smartphone device_name variable
+
+## [v3.0.2] - 2019-03-02
+
+### Added
+
+* Option to disable automatic updates
+* Timeout dialog for continuosMode
+
+### Fixed
+
+* CSV file path auto-resettings issue
+* DNSServiceRef is not initialized error
+
+### Changed
+
+* Minor UI enhancements
+
+## [v3.0.1] - 2019-02-22
+
+### Changed
+
+* Converted Subscription plans to lifetime licenses
+
+### Fixed
+
+* scrollTop error
+
+## [v3.0.0] - 2019-02-19
+
+### Added
+
+* Continuous mode
+* Option to clear the server data
+* Quantity output component
+* Delay output component
+* Other key output component (to press keys like F1, DEL, etc.)
+* Append scannings to CSV file in realtime
+* Auto reconnect when the IP address changes
+* Minimization to tray icon
+* Button to delete scan sessions from the server
+* Support for CODE 32
+* Settings to enable/disable scan formats
+* Added a way to enter barcodes manually (by typing it)
+* OTG support (Open a scan session, type the barcode and press the ENTER key)
+* Repeat barcodes
+* Archive barcodes
+* Search (CTRL+F or CMD+F)
+* Support for Chinese characters (Select clipboard typeMethod) thanks to KaiYi
+
+### Fixed
+
+* DATE, DATE_TIME, etc. variable 'unknown' issue
+* Scan session name sync issue
+* Minor UI enhancements
 
 ## [v2.0.0] - 2017-12-05
 
@@ -72,7 +109,10 @@
 
 * Included the Apple Bonjour installer
 
-[Unreleased]: https://github.com/fttx/barcode-to-pc-server/compare/v2.0.0...HEAD
-[v2.0.0]: https://github.com/fttx/barcode-to-pc-server/compare/v1.1.0...v2.0.0
+[v3.1.0]: https://github.com/fttx/barcode-to-pc-server/compare/v3.0.3...v3.1.0
+[v3.0.3]: https://github.com/fttx/barcode-to-pc-server/compare/v3.0.2...v3.0.3
+[v3.0.2]: https://github.com/fttx/barcode-to-pc-server/compare/v3.0.1...v3.0.2
+[v3.0.1]: https://github.com/fttx/barcode-to-pc-server/compare/v2.0.0...v3.0.1
+[v3.0.0]: https://github.com/fttx/barcode-to-pc-server/compare/v2.0.0...v3.0.0
 [v2.0.0]: https://github.com/fttx/barcode-to-pc-server/compare/v1.1.0...v2.0.0
 [v1.1.0]: https://github.com/fttx/barcode-to-pc-server/compare/v1.1.0-rc1...v1.1.0
